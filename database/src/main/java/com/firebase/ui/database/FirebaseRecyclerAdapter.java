@@ -1,192 +1,157 @@
-/*
- * Copyright 2016 Google Inc. All Rights Reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the
- * License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
- * express or implied. See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.firebase.ui.database;
 
-import android.support.v7.widget.RecyclerView;
-import android.view.LayoutInflater;
-import android.view.View;
-import android.view.ViewGroup;
+import android.util.Log;
 
+import com.firebase.ui.common.ChangeEventType;
 import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
-import com.google.firebase.database.Query;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
+import androidx.annotation.NonNull;
+import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleOwner;
+import androidx.lifecycle.OnLifecycleEvent;
+import androidx.recyclerview.widget.RecyclerView;
 
 /**
- * This class is a generic way of backing an RecyclerView with a Firebase location.
- * It handles all of the child events at the given Firebase location. It marshals received data into the given
- * class type.
+ * This class is a generic way of backing a {@link RecyclerView} with a Firebase location. It
+ * handles all of the child events at the given Firebase location and marshals received data into
+ * the given class type.
+ * <p>
+ * See the <a href="https://github.com/firebase/FirebaseUI-Android/blob/master/database/README.md">README</a>
+ * for an in-depth tutorial on how to set up the FirebaseRecyclerAdapter.
  *
- * To use this class in your app, subclass it passing in all required parameters and implement the
- * populateViewHolder method.
- *
- * <blockquote><pre>
- * {@code
- *     private static class ChatMessageViewHolder extends RecyclerView.ViewHolder {
- *         TextView messageText;
- *         TextView nameText;
- *
- *         public ChatMessageViewHolder(View itemView) {
- *             super(itemView);
- *             nameText = (TextView)itemView.findViewById(android.R.id.text1);
- *             messageText = (TextView) itemView.findViewById(android.R.id.text2);
- *         }
- *     }
- *
- *     FirebaseRecyclerAdapter<ChatMessage, ChatMessageViewHolder> adapter;
- *     DatabaseReference ref = FirebaseDatabase.getInstance().getReference();
- *
- *     RecyclerView recycler = (RecyclerView) findViewById(R.id.messages_recycler);
- *     recycler.setHasFixedSize(true);
- *     recycler.setLayoutManager(new LinearLayoutManager(this));
- *
- *     adapter = new FirebaseRecyclerAdapter<ChatMessage, ChatMessageViewHolder>(ChatMessage.class, android.R.layout.two_line_list_item, ChatMessageViewHolder.class, ref) {
- *         public void populateViewHolder(ChatMessageViewHolder chatMessageViewHolder, ChatMessage chatMessage, int position) {
- *             chatMessageViewHolder.nameText.setText(chatMessage.getName());
- *             chatMessageViewHolder.messageText.setText(chatMessage.getMessage());
- *         }
- *     };
- *     recycler.setAdapter(mAdapter);
- * }
- * </pre></blockquote>
- *
- * @param <T> The Java class that maps to the type of objects stored in the Firebase location.
- * @param <VH> The ViewHolder class that contains the Views in the layout that is shown for each object.
+ * @param <T>  The Java class that maps to the type of objects stored in the Firebase location.
+ * @param <VH> The {@link RecyclerView.ViewHolder} class that contains the Views in the layout that
+ *             is shown for each object.
  */
-public abstract class FirebaseRecyclerAdapter<T, VH extends RecyclerView.ViewHolder> extends RecyclerView.Adapter<VH> {
+public abstract class FirebaseRecyclerAdapter<T, VH extends RecyclerView.ViewHolder>
+        extends RecyclerView.Adapter<VH> implements FirebaseAdapter<T> {
+    private static final String TAG = "FirebaseRecyclerAdapter";
 
-    Class<T> mModelClass;
-    protected int mModelLayout;
-    Class<VH> mViewHolderClass;
-    FirebaseArray mSnapshots;
-
-    /**
-     * @param modelClass Firebase will marshall the data at a location into an instance of a class that you provide
-     * @param modelLayout This is the layout used to represent a single item in the list. You will be responsible for populating an
-     *                    instance of the corresponding view with the data from an instance of modelClass.
-     * @param viewHolderClass The class that hold references to all sub-views in an instance modelLayout.
-     * @param ref        The Firebase location to watch for data changes. Can also be a slice of a location, using some
-     *                   combination of <code>limit()</code>, <code>startAt()</code>, and <code>endAt()</code>
-     */
-    public FirebaseRecyclerAdapter(Class<T> modelClass, int modelLayout, Class<VH> viewHolderClass, Query ref) {
-        mModelClass = modelClass;
-        mModelLayout = modelLayout;
-        mViewHolderClass = viewHolderClass;
-        mSnapshots = new FirebaseArray(ref);
-
-        mSnapshots.setOnChangedListener(new FirebaseArray.OnChangedListener() {
-            @Override
-            public void onChanged(EventType type, int index, int oldIndex) {
-                switch (type) {
-                    case Added:
-                        notifyItemInserted(index);
-                        break;
-                    case Changed:
-                        notifyItemChanged(index);
-                        break;
-                    case Removed:
-                        notifyItemRemoved(index);
-                        break;
-                    case Moved:
-                        notifyItemMoved(oldIndex, index);
-                        break;
-                    default:
-                        throw new IllegalStateException("Incomplete case statement");
-                }
-            }
-        });
-    }
+    private FirebaseRecyclerOptions<T> mOptions;
+    private ObservableSnapshotArray<T> mSnapshots;
 
     /**
-     * @param modelClass Firebase will marshall the data at a location into an instance of a class that you provide
-     * @param modelLayout This is the layout used to represent a single item in the list. You will be responsible for populating an
-     *                    instance of the corresponding view with the data from an instance of modelClass.
-     * @param viewHolderClass The class that hold references to all sub-views in an instance modelLayout.
-     * @param ref        The Firebase location to watch for data changes. Can also be a slice of a location, using some
-     *                   combination of <code>limit()</code>, <code>startAt()</code>, and <code>endAt()</code>
+     * Initialize a {@link RecyclerView.Adapter} that listens to a Firebase query. See
+     * {@link FirebaseRecyclerOptions} for configuration options.
      */
-    public FirebaseRecyclerAdapter(Class<T> modelClass, int modelLayout, Class<VH> viewHolderClass, DatabaseReference ref) {
-        this(modelClass, modelLayout, viewHolderClass, (Query) ref);
+    public FirebaseRecyclerAdapter(@NonNull FirebaseRecyclerOptions<T> options) {
+        mOptions = options;
+        mSnapshots = options.getSnapshots();
+
+        if (mOptions.getOwner() != null) {
+            mOptions.getOwner().getLifecycle().addObserver(this);
+        }
     }
 
-    public void cleanup() {
-        mSnapshots.cleanup();
+    @Override
+    @OnLifecycleEvent(Lifecycle.Event.ON_START)
+    public void startListening() {
+        if (!mSnapshots.isListening(this)) {
+            mSnapshots.addChangeEventListener(this);
+        }
+    }
+
+    @Override
+    @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
+    public void stopListening() {
+        mSnapshots.removeChangeEventListener(this);
+        notifyDataSetChanged();
+    }
+
+    @OnLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+    void cleanup(LifecycleOwner source) {
+        source.getLifecycle().removeObserver(this);
+    }
+
+    @Override
+    public void onChildChanged(@NonNull ChangeEventType type,
+                               @NonNull DataSnapshot snapshot,
+                               int newIndex,
+                               int oldIndex) {
+        switch (type) {
+            case ADDED:
+                notifyItemInserted(newIndex);
+                break;
+            case CHANGED:
+                notifyItemChanged(newIndex);
+                break;
+            case REMOVED:
+                notifyItemRemoved(newIndex);
+                break;
+            case MOVED:
+                notifyItemMoved(oldIndex, newIndex);
+                break;
+            default:
+                throw new IllegalStateException("Incomplete case statement");
+        }
+    }
+
+    @Override
+    public void onDataChanged() {
+    }
+
+    @Override
+    public void onError(@NonNull DatabaseError error) {
+        Log.w(TAG, error.toException());
+    }
+
+    @NonNull
+    @Override
+    public ObservableSnapshotArray<T> getSnapshots() {
+        return mSnapshots;
+    }
+
+    @NonNull
+    @Override
+    public T getItem(int position) {
+        return mSnapshots.get(position);
+    }
+
+    @NonNull
+    @Override
+    public DatabaseReference getRef(int position) {
+        return mSnapshots.getSnapshot(position).getRef();
     }
 
     @Override
     public int getItemCount() {
-        return mSnapshots.getCount();
-    }
-
-    public T getItem(int position) {
-        return parseSnapshot(mSnapshots.getItem(position));
+        return mSnapshots.isListening(this) ? mSnapshots.size() : 0;
     }
 
     /**
-     * This method parses the DataSnapshot into the requested type. You can override it in subclasses
-     * to do custom parsing.
-     *
-     * @param snapshot the DataSnapshot to extract the model from
-     * @return the model extracted from the DataSnapshot
+     * Re-initialize the Adapter with a new set of options. Can be used to change the query
+     * without re-constructing the entire adapter.
      */
-    protected T parseSnapshot(DataSnapshot snapshot) {
-        return snapshot.getValue(mModelClass);
-    }
+    public void updateOptions(@NonNull FirebaseRecyclerOptions<T> options) {
+        // Tear down old options
+        boolean wasListening = mSnapshots.isListening(this);
+        if (mOptions.getOwner() != null) {
+            mOptions.getOwner().getLifecycle().removeObserver(this);
+        }
+        mSnapshots.clear();
+        stopListening();
 
-    public DatabaseReference getRef(int position) { return mSnapshots.getItem(position).getRef(); }
-
-    @Override
-    public long getItemId(int position) {
-        // http://stackoverflow.com/questions/5100071/whats-the-purpose-of-item-ids-in-android-listview-adapter
-        return mSnapshots.getItem(position).getKey().hashCode();
-    }
-
-    @Override
-    public VH onCreateViewHolder(ViewGroup parent, int viewType) {
-        ViewGroup view = (ViewGroup) LayoutInflater.from(parent.getContext()).inflate(mModelLayout, parent, false);
-        try {
-            Constructor<VH> constructor = mViewHolderClass.getConstructor(View.class);
-            return constructor.newInstance(view);
-        } catch (NoSuchMethodException e) {
-            throw new RuntimeException(e);
-        } catch (InvocationTargetException e) {
-            throw new RuntimeException(e);
-        } catch (InstantiationException e) {
-            throw new RuntimeException(e);
-        } catch (IllegalAccessException e) {
-            throw new RuntimeException(e);
+        // Set up new options
+        mOptions = options;
+        mSnapshots = options.getSnapshots();
+        if (options.getOwner() != null) {
+            options.getOwner().getLifecycle().addObserver(this);
+        }
+        if (wasListening) {
+            startListening();
         }
     }
+
     @Override
-    public void onBindViewHolder(VH viewHolder, int position) {
-        T model = getItem(position);
-        populateViewHolder(viewHolder, model, position);
+    public void onBindViewHolder(@NonNull VH holder, int position) {
+        onBindViewHolder(holder, position, getItem(position));
     }
 
     /**
-     * Each time the data at the given Firebase location changes, this method will be called for each item that needs
-     * to be displayed. The first two arguments correspond to the mLayout and mModelClass given to the constructor of
-     * this class. The third argument is the item's position in the list.
-     * <p>
-     * Your implementation should populate the view using the data contained in the model.
-     *
-     * @param viewHolder The view to populate
-     * @param model      The object containing the data used to populate the view
-     * @param position  The position in the list of the view being populated
+     * @param model the model object containing the data that should be used to populate the view.
+     * @see #onBindViewHolder(RecyclerView.ViewHolder, int)
      */
-    abstract protected void populateViewHolder(VH viewHolder, T model, int position);
+    protected abstract void onBindViewHolder(@NonNull VH holder, int position, @NonNull T model);
 }

@@ -14,46 +14,282 @@
 
 package com.firebase.ui.auth;
 
-import static junit.framework.Assert.assertEquals;
-
-import android.content.Intent;
-
-import com.firebase.ui.auth.test_helpers.CustomRobolectricGradleTestRunner;
-import com.firebase.ui.auth.test_helpers.TestConstants;
-import com.firebase.ui.auth.test_helpers.TestHelper;
-import com.firebase.ui.auth.ui.ExtraConstants;
-import com.firebase.ui.auth.ui.FlowParameters;
-import com.google.firebase.FirebaseApp;
+import com.firebase.ui.auth.AuthUI.IdpConfig;
+import com.firebase.ui.auth.AuthUI.SignInIntentBuilder;
+import com.firebase.ui.auth.data.model.FlowParameters;
+import com.firebase.ui.auth.testhelpers.TestConstants;
+import com.firebase.ui.auth.testhelpers.TestHelper;
+import com.firebase.ui.auth.util.ExtraConstants;
+import com.google.firebase.auth.ActionCodeSettings;
+import com.google.firebase.auth.EmailAuthProvider;
 
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.robolectric.RuntimeEnvironment;
-import org.robolectric.annotation.Config;
+import org.robolectric.RobolectricTestRunner;
 
-@RunWith(CustomRobolectricGradleTestRunner.class)
-@Config(constants = BuildConfig.class, sdk = 21)
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+import static com.google.common.truth.Truth.assertThat;
+import static junit.framework.Assert.assertEquals;
+
+@RunWith(RobolectricTestRunner.class)
 public class AuthUITest {
-    private FirebaseApp mFirebaseApp;
+    private static final String URL = "url";
+    private AuthUI mAuthUi;
 
     @Before
     public void setUp() {
-        mFirebaseApp = TestHelper.initializeApp(RuntimeEnvironment.application);
+        TestHelper.initialize();
+        mAuthUi = AuthUI.getInstance(TestHelper.MOCK_APP);
+    }
+
+    @Test
+    public void testCreateStartIntent_shouldHaveEmailAsDefaultProvider() {
+        FlowParameters flowParameters = mAuthUi
+                .createSignInIntentBuilder()
+                .build()
+                .getParcelableExtra(ExtraConstants.FLOW_PARAMS);
+        assertEquals(1, flowParameters.providers.size());
+        assertEquals(EmailAuthProvider.PROVIDER_ID,
+                flowParameters.providers.get(0).getProviderId());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testCreateStartIntent_shouldOnlyAllowOneInstanceOfAnIdp() {
+        SignInIntentBuilder startIntent = mAuthUi.createSignInIntentBuilder();
+        startIntent.setAvailableProviders(Arrays.asList(
+                new IdpConfig.EmailBuilder().build(),
+                new IdpConfig.EmailBuilder().build()));
     }
 
     @Test
     public void testCreatingStartIntent() {
-        Intent startIntent = AuthUI.getInstance(mFirebaseApp).createSignInIntentBuilder()
-                .setProviders(AuthUI.EMAIL_PROVIDER, AuthUI.GOOGLE_PROVIDER)
-                .setTosUrl(TestConstants.TOS_URL)
+        FlowParameters flowParameters = mAuthUi
+                .createSignInIntentBuilder()
+                .setAvailableProviders(Arrays.asList(
+                        new IdpConfig.EmailBuilder().build(),
+                        new IdpConfig.GoogleBuilder().build(),
+                        new IdpConfig.FacebookBuilder().build(),
+                        new IdpConfig.AnonymousBuilder().build()))
+                .setTosAndPrivacyPolicyUrls(TestConstants.TOS_URL, TestConstants.PRIVACY_URL)
+                .build()
+                .getParcelableExtra(ExtraConstants.FLOW_PARAMS);
+
+        assertEquals(4, flowParameters.providers.size());
+        assertEquals(TestHelper.MOCK_APP.getName(), flowParameters.appName);
+        assertEquals(TestConstants.TOS_URL, flowParameters.termsOfServiceUrl);
+        assertEquals(TestConstants.PRIVACY_URL, flowParameters.privacyPolicyUrl);
+        assertEquals(AuthUI.getDefaultTheme(), flowParameters.themeId);
+    }
+
+    @Test(expected = NullPointerException.class)
+    public void testCreatingStartIntent_withNullTos_expectEnforcesNonNullTosUrl() {
+        SignInIntentBuilder startIntent = mAuthUi.createSignInIntentBuilder();
+        startIntent.setTosAndPrivacyPolicyUrls(null, TestConstants.PRIVACY_URL);
+    }
+
+    @Test(expected = NullPointerException.class)
+    public void testCreatingStartIntent_withNullPp_expectEnforcesNonNullPpUrl() {
+        SignInIntentBuilder startIntent = mAuthUi.createSignInIntentBuilder();
+        startIntent.setTosAndPrivacyPolicyUrls(TestConstants.TOS_URL, null);
+    }
+
+    @Test(expected = IllegalStateException.class)
+    public void testCreatingStartIntent_withOnlyAnonymousProvider_expectIllegalStateException() {
+        SignInIntentBuilder startIntent = mAuthUi.createSignInIntentBuilder();
+        startIntent.setAvailableProviders(Arrays.asList(new IdpConfig.AnonymousBuilder().build()));
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testPhoneBuilder_withBlacklistedDefaultNumberCode_expectIllegalArgumentException() {
+        new IdpConfig.PhoneBuilder()
+                .setDefaultNumber("+1123456789")
+                .setBlacklistedCountries(Arrays.asList("+1"))
+                .build();
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testPhoneBuilder_withBlacklistedDefaultIso_expectIllegalArgumentException() {
+        new IdpConfig.PhoneBuilder()
+                .setDefaultNumber("us", "123456789")
+                .setBlacklistedCountries(Arrays.asList("us"))
+                .build();
+    }
+
+    @Test
+    public void testPhoneBuilder_withWhitelistedDefaultIso_expectSuccess() {
+        new IdpConfig.PhoneBuilder()
+                .setDefaultNumber("us", "123456789")
+                .setWhitelistedCountries(Arrays.asList("us"))
+                .build();
+    }
+
+    @Test
+    public void testPhoneBuilder_withWhitelistedDefaultNumberCode_expectSuccess() {
+        new IdpConfig.PhoneBuilder()
+                .setDefaultNumber("+1123456789")
+                .setWhitelistedCountries(Arrays.asList("+1"))
+                .build();
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testPhoneBuilder_whiteInvalidDefaultNumberCode_expectIllegalArgumentException() {
+        new IdpConfig.PhoneBuilder()
+                .setDefaultNumber("+1123456789")
+                .setWhitelistedCountries(Arrays.asList("gr"))
+                .build();
+    }
+
+    @Test
+    public void testPhoneBuilder_withValidDefaultNumberCode_expectSuccess() {
+        new IdpConfig.PhoneBuilder()
+                .setDefaultNumber("+1123456789")
+                .setWhitelistedCountries(Arrays.asList("ca"))
+                .build();
+    }
+
+    @Test
+    public void testPhoneBuilder_withBlacklistedCountryWithSameCountryCode_expectSucess() {
+        new IdpConfig.PhoneBuilder()
+                .setDefaultNumber("+1123456789")
+                .setBlacklistedCountries(Arrays.asList("ca"))
+                .build();
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void testPhoneBuilder_withInvalidDefaultIso_expectIllegalArgumentException() {
+        new IdpConfig.PhoneBuilder()
+                .setDefaultNumber("us", "123456789")
+                .setWhitelistedCountries(Arrays.asList("ca"))
+                .build();
+    }
+
+    @Test
+    public void testPhoneBuilder_withValidDefaultIso_expectSucess() {
+        new IdpConfig.PhoneBuilder()
+                .setDefaultNumber("us", "123456789")
+                .setBlacklistedCountries(Arrays.asList("ca"))
+                .build();
+    }
+
+    @Test(expected = IllegalStateException.class)
+    public void
+    testPhoneBuilder_setBothBlacklistedAndWhitelistedCountries_expectIllegalStateException() {
+        List<String> countries = Arrays.asList("ca");
+        new IdpConfig.PhoneBuilder()
+                .setBlacklistedCountries(countries)
+                .setWhitelistedCountries(countries)
+                .build();
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void
+    testPhoneBuilder_passEmptyListForWhitelistedCountries_expectIllegalArgumentException() {
+        new IdpConfig.PhoneBuilder()
+                .setWhitelistedCountries(new ArrayList<String>())
+                .build();
+    }
+
+    @Test(expected = NullPointerException.class)
+    public void testPhoneBuilder_passNullForWhitelistedCountries_expectNullPointerException() {
+        new IdpConfig.PhoneBuilder()
+                .setWhitelistedCountries(null)
+                .build();
+    }
+
+
+    @Test(expected = IllegalArgumentException.class)
+    public void
+    testPhoneBuilder_passEmptyListForBlacklistedCountries_expectIllegalArgumentException() {
+        new IdpConfig.PhoneBuilder()
+                .setBlacklistedCountries(new ArrayList<String>())
+                .build();
+    }
+
+    @Test(expected = NullPointerException.class)
+    public void testPhoneBuilder_passNullForBlacklistedCountries_expectNullPointerException() {
+        new IdpConfig.PhoneBuilder()
+                .setBlacklistedCountries(null)
+                .build();
+    }
+
+    @Test
+    public void testAnonymousBuilder_expectSuccess() {
+        new IdpConfig.AnonymousBuilder()
+                .build();
+    }
+
+    @Test
+    public void testCustomAuthMethodPickerLayout() {
+        //Testing with some random layout res
+        AuthMethodPickerLayout customLayout =
+                new AuthMethodPickerLayout.Builder(R.layout.fui_phone_layout)
+                        .setAnonymousButtonId(123)
+                        .build();
+
+        FlowParameters flowParameters = mAuthUi
+                .createSignInIntentBuilder()
+                .setAuthMethodPickerLayout(customLayout)
+                .build()
+                .getParcelableExtra(ExtraConstants.FLOW_PARAMS);
+
+        assert flowParameters.authMethodPickerLayout != null;
+        assertEquals(customLayout.getMainLayout(), flowParameters.authMethodPickerLayout.getMainLayout());
+    }
+
+    @Test
+    public void testEmailBuilder_withValidActionCodeSettings_expectSuccess() {
+        ActionCodeSettings actionCodeSettings =
+                ActionCodeSettings.newBuilder()
+                        .setUrl(URL)
+                        .setHandleCodeInApp(true)
+                        .build();
+
+        IdpConfig config = new IdpConfig.EmailBuilder()
+                .enableEmailLinkSignIn()
+                .setActionCodeSettings(actionCodeSettings)
+                .setForceSameDevice()
                 .build();
 
-        FlowParameters flowParameters = startIntent.getParcelableExtra(
-                ExtraConstants.EXTRA_FLOW_PARAMS);
+        assertThat(config.getParams().getParcelable(ExtraConstants.ACTION_CODE_SETTINGS))
+                .isEqualTo(actionCodeSettings);
+        assertThat(config.getParams().getBoolean(ExtraConstants.FORCE_SAME_DEVICE))
+                .isEqualTo(true);
+        assertThat(config.getProviderId()).isEqualTo(AuthUI.EMAIL_LINK_PROVIDER);
 
-        assertEquals(flowParameters.providerInfo.size(), 2);
-        assertEquals(flowParameters.appName, mFirebaseApp.getName());
-        assertEquals(flowParameters.termsOfServiceUrl, TestConstants.TOS_URL);
-        assertEquals(flowParameters.themeId, AuthUI.getDefaultTheme());
+    }
+
+    @Test(expected = NullPointerException.class)
+    public void testEmailBuilder_withoutActionCodeSettings_expectThrows() {
+        new IdpConfig.EmailBuilder().enableEmailLinkSignIn().build();
+    }
+
+    @Test(expected = IllegalStateException.class)
+    public void
+    testEmailBuilder_withActionCodeSettingsAndHandleCodeInAppFalse_expectThrows() {
+        ActionCodeSettings actionCodeSettings = ActionCodeSettings.newBuilder().setUrl(URL).build();
+        new IdpConfig.EmailBuilder().enableEmailLinkSignIn().setActionCodeSettings
+                (actionCodeSettings).build();
+    }
+
+    @Test(expected = IllegalStateException.class)
+    public void testEmailBuilder_withAnonymousUpgradeAndNotForcingSameDevice_expectThrows() {
+        ActionCodeSettings actionCodeSettings = ActionCodeSettings.newBuilder().setUrl(URL).build();
+        new IdpConfig.EmailBuilder().enableEmailLinkSignIn().setActionCodeSettings
+                (actionCodeSettings).build();
+    }
+
+    @Test(expected = IllegalStateException.class)
+    public void testSignInIntentBuilder_anonymousUpgradeWithEmailLinkCrossDevice_expectThrows() {
+        ActionCodeSettings actionCodeSettings = ActionCodeSettings.newBuilder().setUrl(URL).build();
+        IdpConfig config = new IdpConfig.EmailBuilder().enableEmailLinkSignIn()
+                .setActionCodeSettings(actionCodeSettings).build();
+
+        AuthUI.getInstance().createSignInIntentBuilder()
+                .setAvailableProviders(Arrays.asList(config))
+                .enableAnonymousUsersAutoUpgrade();
     }
 }

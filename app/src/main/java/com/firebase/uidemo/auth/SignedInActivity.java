@@ -14,57 +14,68 @@
 
 package com.firebase.uidemo.auth;
 
-import android.app.Activity;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.os.Bundle;
-import android.support.annotation.MainThread;
-import android.support.annotation.NonNull;
-import android.support.annotation.StringRes;
-import android.support.design.widget.Snackbar;
-import android.support.v7.app.AlertDialog;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
 
-import com.bumptech.glide.Glide;
 import com.firebase.ui.auth.AuthUI;
+import com.firebase.ui.auth.IdpResponse;
+import com.firebase.ui.auth.util.ExtraConstants;
 import com.firebase.uidemo.R;
+import com.firebase.uidemo.storage.GlideApp;
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
+import com.google.android.material.snackbar.Snackbar;
 import com.google.firebase.auth.EmailAuthProvider;
 import com.google.firebase.auth.FacebookAuthProvider;
 import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseAuthProvider;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.auth.GoogleAuthProvider;
+import com.google.firebase.auth.PhoneAuthProvider;
+import com.google.firebase.auth.TwitterAuthProvider;
+import com.google.firebase.auth.UserInfo;
 
-import java.util.Iterator;
+import java.util.ArrayList;
+import java.util.List;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatActivity;
 import butterknife.BindView;
 import butterknife.ButterKnife;
 import butterknife.OnClick;
 
-public class SignedInActivity extends Activity {
+import static com.firebase.ui.auth.AuthUI.EMAIL_LINK_PROVIDER;
 
-    @BindView(android.R.id.content)
-    View mRootView;
+public class SignedInActivity extends AppCompatActivity {
+    private static final String TAG = "SignedInActivity";
 
-    @BindView(R.id.user_profile_picture)
-    ImageView mUserProfilePicture;
+    @BindView(android.R.id.content) View mRootView;
 
-    @BindView(R.id.user_email)
-    TextView mUserEmail;
+    @BindView(R.id.user_profile_picture) ImageView mUserProfilePicture;
+    @BindView(R.id.user_email) TextView mUserEmail;
+    @BindView(R.id.user_display_name) TextView mUserDisplayName;
+    @BindView(R.id.user_phone_number) TextView mUserPhoneNumber;
+    @BindView(R.id.user_enabled_providers) TextView mEnabledProviders;
+    @BindView(R.id.user_is_new) TextView mIsNewUser;
 
-    @BindView(R.id.user_display_name)
-    TextView mUserDisplayName;
-
-    @BindView(R.id.user_enabled_providers)
-    TextView mEnabledProviders;
+    @NonNull
+    public static Intent createIntent(@NonNull Context context, @Nullable IdpResponse response) {
+        return new Intent().setClass(context, SignedInActivity.class)
+                .putExtra(ExtraConstants.IDP_RESPONSE, response);
+    }
 
     @Override
-    public void onCreate(Bundle savedInstanceState) {
+    public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         FirebaseUser currentUser = FirebaseAuth.getInstance().getCurrentUser();
@@ -74,9 +85,12 @@ public class SignedInActivity extends Activity {
             return;
         }
 
+        IdpResponse response = getIntent().getParcelableExtra(ExtraConstants.IDP_RESPONSE);
+
         setContentView(R.layout.signed_in_layout);
         ButterKnife.bind(this);
-        populateProfile();
+        populateProfile(response);
+        populateIdpToken(response);
     }
 
     @OnClick(R.id.sign_out)
@@ -90,6 +104,7 @@ public class SignedInActivity extends Activity {
                             startActivity(AuthUiActivity.createIntent(SignedInActivity.this));
                             finish();
                         } else {
+                            Log.w(TAG, "signOut:failure", task.getException());
                             showSnackbar(R.string.sign_out_failed);
                         }
                     }
@@ -98,8 +113,7 @@ public class SignedInActivity extends Activity {
 
     @OnClick(R.id.delete_account)
     public void deleteAccountClicked() {
-
-        AlertDialog dialog = new AlertDialog.Builder(this)
+        new AlertDialog.Builder(this)
                 .setMessage("Are you sure you want to delete this account?")
                 .setPositiveButton("Yes, nuke it!", new DialogInterface.OnClickListener() {
                     @Override
@@ -108,16 +122,13 @@ public class SignedInActivity extends Activity {
                     }
                 })
                 .setNegativeButton("No", null)
-                .create();
-
-        dialog.show();
+                .show();
     }
 
     private void deleteAccount() {
-        FirebaseAuth.getInstance()
-                .getCurrentUser()
-                .delete()
-                .addOnCompleteListener(new OnCompleteListener<Void>() {
+        AuthUI.getInstance()
+                .delete(this)
+                .addOnCompleteListener(this, new OnCompleteListener<Void>() {
                     @Override
                     public void onComplete(@NonNull Task<Void> task) {
                         if (task.isSuccessful()) {
@@ -130,11 +141,10 @@ public class SignedInActivity extends Activity {
                 });
     }
 
-    @MainThread
-    private void populateProfile() {
+    private void populateProfile(@Nullable IdpResponse response) {
         FirebaseUser user = FirebaseAuth.getInstance().getCurrentUser();
         if (user.getPhotoUrl() != null) {
-            Glide.with(this)
+            GlideApp.with(this)
                     .load(user.getPhotoUrl())
                     .fitCenter()
                     .into(mUserProfilePicture);
@@ -142,47 +152,81 @@ public class SignedInActivity extends Activity {
 
         mUserEmail.setText(
                 TextUtils.isEmpty(user.getEmail()) ? "No email" : user.getEmail());
+        mUserPhoneNumber.setText(
+                TextUtils.isEmpty(user.getPhoneNumber()) ? "No phone number" : user.getPhoneNumber());
         mUserDisplayName.setText(
                 TextUtils.isEmpty(user.getDisplayName()) ? "No display name" : user.getDisplayName());
 
-        StringBuilder providerList = new StringBuilder();
-
-        providerList.append("Providers used: ");
-
-        if (user.getProviders() == null || user.getProviders().isEmpty()) {
-            providerList.append("none");
+        if (response == null) {
+            mIsNewUser.setVisibility(View.GONE);
         } else {
-            Iterator<String> providerIter = user.getProviders().iterator();
-            while (providerIter.hasNext()) {
-                String provider = providerIter.next();
-                if (GoogleAuthProvider.PROVIDER_ID.equals(provider)) {
-                    providerList.append("Google");
-                } else if (FacebookAuthProvider.PROVIDER_ID.equals(provider)) {
-                    providerList.append("Facebook");
-                } else if (EmailAuthProvider.PROVIDER_ID.equals(provider)) {
-                    providerList.append("Password");
-                } else {
-                    providerList.append(provider);
-                }
+            mIsNewUser.setVisibility(View.VISIBLE);
+            mIsNewUser.setText(response.isNewUser() ? "New user" : "Existing user");
+        }
 
-                if (providerIter.hasNext()) {
-                    providerList.append(", ");
+        List<String> providers = new ArrayList<>();
+        if (user.getProviderData().isEmpty()) {
+            providers.add(getString(R.string.providers_anonymous));
+        } else {
+            for (UserInfo info : user.getProviderData()) {
+                switch (info.getProviderId()) {
+                    case GoogleAuthProvider.PROVIDER_ID:
+                        providers.add(getString(R.string.providers_google));
+                        break;
+                    case FacebookAuthProvider.PROVIDER_ID:
+                        providers.add(getString(R.string.providers_facebook));
+                        break;
+                    case TwitterAuthProvider.PROVIDER_ID:
+                        providers.add(getString(R.string.providers_twitter));
+                        break;
+                    case EmailAuthProvider.PROVIDER_ID:
+                        providers.add(getString(R.string.providers_email));
+                        break;
+                    case PhoneAuthProvider.PROVIDER_ID:
+                        providers.add(getString(R.string.providers_phone));
+                        break;
+                    case EMAIL_LINK_PROVIDER:
+                        providers.add(getString(R.string.providers_email_link));
+                        break;
+                    case FirebaseAuthProvider.PROVIDER_ID:
+                        // Ignore this provider, it's not very meaningful
+                        break;
+                    default:
+                        throw new IllegalStateException(
+                                "Unknown provider: " + info.getProviderId());
                 }
             }
         }
 
-        mEnabledProviders.setText(providerList);
+        mEnabledProviders.setText(getString(R.string.used_providers, providers));
     }
 
-    @MainThread
+    private void populateIdpToken(@Nullable IdpResponse response) {
+        String token = null;
+        String secret = null;
+        if (response != null) {
+            token = response.getIdpToken();
+            secret = response.getIdpSecret();
+        }
+
+        View idpTokenLayout = findViewById(R.id.idp_token_layout);
+        if (token == null) {
+            idpTokenLayout.setVisibility(View.GONE);
+        } else {
+            idpTokenLayout.setVisibility(View.VISIBLE);
+            ((TextView) findViewById(R.id.idp_token)).setText(token);
+        }
+
+        View idpSecretLayout = findViewById(R.id.idp_secret_layout);
+        if (secret == null) {
+            idpSecretLayout.setVisibility(View.GONE);
+        } else {
+            idpSecretLayout.setVisibility(View.VISIBLE);
+            ((TextView) findViewById(R.id.idp_secret)).setText(secret);
+        }
+    }
+
     private void showSnackbar(@StringRes int errorMessageRes) {
-        Snackbar.make(mRootView, errorMessageRes, Snackbar.LENGTH_LONG)
-                .show();
-    }
-
-    public static Intent createIntent(Context context) {
-        Intent in = new Intent();
-        in.setClass(context, SignedInActivity.class);
-        return in;
+        Snackbar.make(mRootView, errorMessageRes, Snackbar.LENGTH_LONG).show();
     }
 }

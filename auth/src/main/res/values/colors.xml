@@ -1,17 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="authui_colorPrimary">#3E50B4</color>
-    <color name="authui_colorPrimaryDark">#2F3E9E</color>
-    <color name="authui_colorAccent">#3E50B4</color>
-    <color name="authui_colorActivated">#1a237e</color>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Eventually, we should remove these so the developer knows they have to style FirebaseUI -->
+    <color name="colorPrimary" tools:ignore="ResourceName">#3F51B5</color>
+    <color name="colorPrimaryDark" tools:ignore="ResourceName">#303F9F</color>
+    <color name="colorAccent" tools:ignore="ResourceName">#FF4081</color>
 
-    <color name="headingColor">#212121</color>
-    <color name="bodyTextColor">#c0000000</color>
-    <color name="errorColor">#DD2C00</color>
-    <color name="linkColor">#4285F4</color>
-    <color name="buttonColor">@color/authui_colorPrimary</color>
-    <color name="buttonColorPressed">@color/authui_colorActivated</color>
-    <color name="buttonTextColor">#FFFFFF</color>
-    <color name="inputLabelColor">#757575</color>
-    <color name="shadowColor">#eeeeee</color>
+    <color name="fui_linkColor">#4285F4</color>
+    <color name="fui_transparent">#00000000</color>
+
+    <color name="fui_bgGoogle">#ffffff</color>
+    <color name="fui_bgFacebook">#3B5998</color>
+    <color name="fui_bgTwitter">#FF5BAAF4</color>
+    <color name="fui_bgGitHub">#24292E</color>
+    <color name="fui_bgEmail">#D0021B</color>
+    <color name="fui_bgPhone">#43C5A5</color>
+    <color name="fui_bgAnonymous">#f4b400</color>
+    <color name="fui_buttonShadow">#64BEBEBE</color>
 </resources>
